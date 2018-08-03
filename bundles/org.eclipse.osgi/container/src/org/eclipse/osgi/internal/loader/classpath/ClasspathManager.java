@@ -371,25 +371,47 @@ public class ClasspathManager {
 	private URL findLocalResourceImpl(String resource, int classPathIndex) {
 		Module m = generation.getRevision().getRevisions().getModule();
 		URL result = null;
-		int curIndex = 0;
+		int[] curIndex = {0};
+
+		// look in hook specific entries if any
+		for (ClassLoaderHook hook : hookRegistry.getClassLoaderHooks()) {
+			ClasspathEntry[] hookEntries = hook.getClassPathEntries(resource, this);
+			if (hookEntries != null) {
+				result = findLocalResourceImpl(resource, hookEntries, m, classPathIndex, curIndex);
+				if (result != null) {
+					return result;
+				}
+			}
+		}
+
+		curIndex[0] = 0;
+		// look in classpath entries
+		result = findLocalResourceImpl(resource, entries, m, classPathIndex, curIndex);
+		if (result != null) {
+			return result;
+		}
+
+		// look in fragment entries
+		for (FragmentClasspath fragCP : getFragmentClasspaths()) {
+			result = findLocalResourceImpl(resource, fragCP.getEntries(), m, classPathIndex, curIndex);
+			if (result != null) {
+				return result;
+			}
+		}
+
+		return null;
+	}
+
+	private URL findLocalResourceImpl(String resource, ClasspathEntry[] entries, Module m, int classPathIndex, int[] curIndex) {
+		URL result;
 		for (ClasspathEntry cpEntry : entries) {
 			if (cpEntry != null) {
-				result = cpEntry.findResource(resource, m, curIndex);
-				if (result != null && (classPathIndex == -1 || classPathIndex == curIndex)) {
+				result = cpEntry.findResource(resource, m, curIndex[0]);
+				if (result != null && (classPathIndex == -1 || classPathIndex == curIndex[0])) {
 					return result;
 				}
 			}
-			curIndex++;
-		}
-		// look in fragments
-		for (FragmentClasspath fragCP : getFragmentClasspaths()) {
-			for (ClasspathEntry cpEntry : fragCP.getEntries()) {
-				result = cpEntry.findResource(resource, m, curIndex);
-				if (result != null && (classPathIndex == -1 || classPathIndex == curIndex)) {
-					return result;
-				}
-				curIndex++;
-			}
+			curIndex[0]++;
 		}
 		return null;
 	}
@@ -402,29 +424,42 @@ public class ClasspathManager {
 	public Enumeration<URL> findLocalResources(String resource) {
 		Module m = generation.getRevision().getRevisions().getModule();
 		List<URL> resources = new ArrayList<>(6);
-		int classPathIndex = 0;
-		for (ClasspathEntry cpEntry : entries) {
-			if (cpEntry != null) {
-				URL url = cpEntry.findResource(resource, m, classPathIndex);
-				if (url != null) {
-					resources.add(url);
-				}
-			}
-			classPathIndex++;
-		}
-		// look in fragments
-		for (FragmentClasspath fragCP : getFragmentClasspaths()) {
-			for (ClasspathEntry cpEntry : fragCP.getEntries()) {
-				URL url = cpEntry.findResource(resource, m, classPathIndex);
-				if (url != null) {
-					resources.add(url);
-				}
-				classPathIndex++;
+		int[] classPathIndex = {0};
+
+		// look in hook specific entries if any
+		for (ClassLoaderHook hook : hookRegistry.getClassLoaderHooks()) {
+			ClasspathEntry[] hookEntries = hook.getClassPathEntries(resource, this);
+			if (hookEntries != null) {
+				findLocalResources(resource, hookEntries, m, classPathIndex, resources);
 			}
 		}
+
+		// look in classpath entries and fragment entries if none available via hooks
+		if (resources.isEmpty()) {
+			classPathIndex[0] = 0;
+
+			findLocalResources(resource, entries, m, classPathIndex, resources);
+
+			for (FragmentClasspath fragCP : getFragmentClasspaths()) {
+				findLocalResources(resource, fragCP.getEntries(), m, classPathIndex, resources);
+			}
+		}
+
 		if (resources.size() > 0)
 			return Collections.enumeration(resources);
 		return EMPTY_ENUMERATION;
+	}
+
+	private void findLocalResources(String resource, ClasspathEntry[] cpEntries, Module m, int[] classPathIndex, List<URL> resources) {
+		for (ClasspathEntry cpEntry : cpEntries) {
+			if (cpEntry != null) {
+				URL url = cpEntry.findResource(resource, m, classPathIndex[0]);
+				if (url != null) {
+					resources.add(url);
+				}
+			}
+			classPathIndex[0]++;
+		}
 	}
 
 	/**
@@ -445,27 +480,49 @@ public class ClasspathManager {
 	 */
 	public BundleEntry findLocalEntry(String path, int classPathIndex) {
 		BundleEntry result = null;
-		int curIndex = 0;
-		for (int i = 0; i < entries.length; i++) {
-			if (entries[i] != null) {
-				result = entries[i].findEntry(path);
-				if (result != null && (classPathIndex == -1 || classPathIndex == curIndex))
+		int[] curIndex = {0};
+
+		// look in hook specific entries if any
+		for (ClassLoaderHook hook : hookRegistry.getClassLoaderHooks()) {
+			ClasspathEntry[] hookEntries = hook.getClassPathEntries(path, this);
+			if (hookEntries != null) {
+				result = findLocalEntry(path, hookEntries, classPathIndex, curIndex);
+				if (result != null) {
 					return result;
-			}
-			curIndex++;
-		}
-		// look in fragments
-		FragmentClasspath[] currentFragments = getFragmentClasspaths();
-		for (int i = 0; i < currentFragments.length; i++) {
-			ClasspathEntry[] fragEntries = currentFragments[i].getEntries();
-			for (int j = 0; j < fragEntries.length; j++) {
-				result = fragEntries[j].findEntry(path);
-				if (result != null && (classPathIndex == -1 || classPathIndex == curIndex))
-					return result;
-				curIndex++;
+				}
 			}
 		}
+
+		curIndex[0] = 0;
+		// look in classpath entries
+		result = findLocalEntry(path, entries, classPathIndex, curIndex);
+		if (result != null) {
+			return result;
+		}
+
+		// look in fragment entries
+		for (FragmentClasspath fragCP : getFragmentClasspaths()) {
+			result = findLocalEntry(path, fragCP.getEntries(), classPathIndex, curIndex);
+			if (result != null) {
+				return result;
+			}
+		}
+
 		return null;
+	}
+
+	private BundleEntry findLocalEntry(String path, ClasspathEntry[] cpEntries, int classPathIndex, int[] curIndex) {
+		BundleEntry result = null;
+		for (ClasspathEntry cpEntry : cpEntries) {
+			if (cpEntry != null) {
+				result = cpEntry.findEntry(path);
+				if (result != null && (classPathIndex == -1 || classPathIndex == curIndex[0])) {
+					return result;
+				}
+			}
+			curIndex[0]++;
+		}
+		return result;
 	}
 
 	/**
@@ -508,25 +565,47 @@ public class ClasspathManager {
 	}
 
 	private Class<?> findLocalClassImpl(String classname, List<ClassLoaderHook> hooks) throws ClassNotFoundException {
-		Class<?> result = null;
-		for (int i = 0; i < entries.length; i++) {
-			if (entries[i] != null) {
-				result = findClassImpl(classname, entries[i], hooks);
-				if (result != null)
+		Class<?> result;
+
+		// look in hook specific entries if any
+		for (ClassLoaderHook hook : hookRegistry.getClassLoaderHooks()) {
+			ClasspathEntry[] hookEntries = hook.getClassPathEntries(classname, this);
+			if (hookEntries != null) {
+				result = findLocalClassImpl(classname, hookEntries, hooks);
+				if (result != null) {
 					return result;
+				}
 			}
 		}
-		// look in fragments.
-		FragmentClasspath[] currentFragments = getFragmentClasspaths();
-		for (int i = 0; i < currentFragments.length; i++) {
-			ClasspathEntry[] fragEntries = currentFragments[i].getEntries();
-			for (int j = 0; j < fragEntries.length; j++) {
-				result = findClassImpl(classname, fragEntries[j], hooks);
-				if (result != null)
-					return result;
+
+		// look in classpath entries
+		result = findLocalClassImpl(classname, entries, hooks);
+		if (result != null) {
+			return result;
+		}
+
+		// look in fragment entries
+		for (FragmentClasspath fragCP : getFragmentClasspaths()) {
+			result = findLocalClassImpl(classname, fragCP.getEntries(), hooks);
+			if (result != null) {
+				return result;
 			}
 		}
+
 		throw new ClassNotFoundException(classname);
+	}
+
+	private Class<?> findLocalClassImpl(String classname, ClasspathEntry[] cpEntries, List<ClassLoaderHook> hooks) {
+		Class<?> result;
+		for (ClasspathEntry cpEntry : cpEntries) {
+			if (cpEntry != null) {
+				result = findClassImpl(classname, cpEntry, hooks);
+				if (result != null) {
+					return result;
+				}
+			}
+		}
+		return null;
 	}
 
 	private Class<?> findClassImpl(String name, ClasspathEntry classpathEntry, List<ClassLoaderHook> hooks) {
